@@ -1,0 +1,42 @@
+# Cloud Mail 配置文件示例
+# 用法: cloudmail -c config.toml
+# 不传 -c 时自动读取当前目录的 config.toml；两者都没有时使用内置默认值直接启动。
+# 所有项均可省略，省略即用默认值。
+
+host = "0.0.0.0"
+port = 8080
+
+# 数据库目录（启动时自动创建，无需手工 mkdir）
+database_dir = "data"
+# 也可写完整连接串覆盖 database_dir，例如：
+# database_url = "sqlite:///var/lib/cloudmail/cloud-mail.db?mode=rwc"
+
+# 附件/对象存储目录（启动时自动创建）
+storage_dir = "data/storage"
+
+# JWT 签名密钥；不配置时默认 cloudmail-default-secret-change-me，生产环境务必改成随机长字符串
+jwt_secret = "change-this-to-a-long-random-secret"
+
+# 允许注册的邮箱域名（支持多个）
+domains = ["example.com"]
+
+# 管理员邮箱
+admin = "admin@example.com"
+
+# 允许的浏览器来源（CORS，支持多个）
+cors_origins = ["http://localhost:3001"]
+
+# SMTP 会话横幅中的主机名
+smtp_hostname = "cloud-mail"
+
+# 入站 SMTP 监听端口（25 需要 root/CAP_NET_BIND_SERVICE；绑不上只告警，不影响 HTTP 服务）
+smtp_listen_port = 25
+
+# 出站 SMTP 中继：可选。host 留空或删掉整个 [smtp] 段即不启用发信。
+[smtp]
+host = ""
+port = 587
+user = ""
+password = ""
+from = ""
+tls = true
