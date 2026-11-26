@@ -201,7 +201,9 @@ async fn main() -> anyhow::Result<()> {
         );
 
     // Start inbound SMTP server (optional — fails gracefully if port unavailable)
-    let smtp_addr = format!("{}:{}", config.host, config.smtp_listen_port);
+    // 入站 SMTP 固定监听所有网卡：外部邮件服务器必须能投递到 25 端口，
+    // 面板的 host（可能仅限内网/本机）不应影响收信。
+    let smtp_addr = format!("0.0.0.0:{}", config.smtp_listen_port);
     match tokio::net::TcpListener::bind(&smtp_addr).await {
         Ok(smtp_listener) => {
             let smtp_state = state.clone();
