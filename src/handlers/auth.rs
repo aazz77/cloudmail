@@ -95,6 +95,22 @@ pub async fn register(
     headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> Response {
+    // 注册门禁：仅允许配置文件中的 admin 邮箱注册；该账号一旦存在，注册整体关闭。
+    // 优先于 setting.register 开关与注册码等策略，等价于「一次性初始化管理员」。
+    let admin_email = state.config.admin.as_str();
+    if !req.email.eq_ignore_ascii_case(admin_email) {
+        return err(400, "regDisabled");
+    }
+    let admin_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user WHERE email=? COLLATE NOCASE")
+            .bind(admin_email)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    if admin_exists > 0 {
+        return err(400, "regDisabled");
+    }
+
     let setting = current_setting(&state).await;
     if setting["register"].as_i64().unwrap_or(0) == 1 {
         return err(400, "regDisabled");
@@ -125,14 +141,6 @@ pub async fn register(
     }
     if !state.config.domain_allowed(&req.email) {
         return err(400, "notEmailDomain");
-    }
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user WHERE email=? COLLATE NOCASE")
-        .bind(&req.email)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
-    if exists > 0 {
-        return err(400, "isRegAccount");
     }
 
     // Turnstile（原版 registerVerify OPEN/COUNT 两种触发方式）
