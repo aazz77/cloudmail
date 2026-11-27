@@ -1,18 +1,13 @@
-FROM node:22-slim AS frontend
-WORKDIR /build/web-src
-COPY web-src/package.json web-src/package-lock.json ./
-RUN npm ci
-COPY web-src/ ./
-RUN npm run build
-
 FROM rust:1.85-slim AS backend
 WORKDIR /build
+# Frontend assets are prebuilt in ./frontend and embedded into the binary via rust-embed,
+# so they must be present at compile time. No node build stage needed.
 COPY Cargo.toml ./
 COPY Cargo.lock* ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release || true
 COPY src ./src
 COPY migrations ./migrations
-COPY --from=frontend /build/frontend/dist ./frontend/dist
+COPY frontend ./frontend
 COPY Cargo.toml ./Cargo.toml
 RUN touch src/main.rs && cargo build --release
 
