@@ -27,10 +27,9 @@ use tracing_subscriber::{fmt, EnvFilter};
 use crate::config::Config;
 use crate::models::AppState;
 
-/// Frontend static assets, embedded into the binary at compile time.
-/// In debug builds rust-embed reads from disk; in release builds it embeds.
+/// Frontend static assets, built by CI into `frontend/dist/` and embedded at compile time.
 #[derive(RustEmbed)]
-#[folder = "frontend/"]
+#[folder = "frontend/dist/"]
 struct FrontendAsset;
 
 async fn frontend_asset(uri: Uri) -> Response {
