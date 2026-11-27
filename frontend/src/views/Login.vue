@@ -67,9 +67,12 @@ const doLogin = async () => {
   busy.value = true;
   try {
     const data = await api.post('/api/login', { email: login.email, password: login.password, token: login.token }, { auth: false });
+    if (!data || !data.token) throw new Error('登录响应缺少 token，请稍后重试');
     setToken(data.token);
     ElMessage.success('登录成功');
     router.push('/inbox');
+  } catch (e) {
+    ElMessage.error(e?.message || '登录失败，请稍后重试');
   } finally { busy.value = false; }
 };
 
@@ -81,6 +84,8 @@ const doRegister = async () => {
     ElMessage.success('注册成功，请登录');
     tab.value = 'login';
     login.email = reg.email;
+  } catch (e) {
+    ElMessage.error(e?.message || '注册失败，请稍后重试');
   } finally { busy.value = false; }
 };
 </script>

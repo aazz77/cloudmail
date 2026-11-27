@@ -86,11 +86,18 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!().run(&pool).await?;
     handlers::tasks::spawn(pool.clone(), config.clone());
 
-    let origins: Vec<axum::http::HeaderValue> = config
-        .cors_origins
-        .iter()
-        .map(|origin| origin.parse())
-        .collect::<Result<_, _>>()?;
+    // `*` 必须走 AllowOrigin::any()，不能传给 AllowOrigin::list（tower-http 会 panic）。
+    let wildcard = config.cors_origins.iter().any(|o| o == "*");
+    let origins = if wildcard {
+        None
+    } else {
+        let list = config
+            .cors_origins
+            .iter()
+            .map(|origin| origin.parse::<axum::http::HeaderValue>())
+            .collect::<Result<Vec<_>, _>>()?;
+        Some(list)
+    };
 
     let state = Arc::new(AppState {
         pool,
@@ -190,7 +197,10 @@ async fn main() -> anyhow::Result<()> {
         .fallback(get(frontend_asset))
         .layer(
             CorsLayer::new()
-                .allow_origin(origins)
+                .allow_origin(match origins {
+                    Some(list) => tower_http::cors::AllowOrigin::list(list),
+                    None => tower_http::cors::AllowOrigin::any(),
+                })
                 .allow_methods(Any)
                 .allow_headers(Any),
         );
