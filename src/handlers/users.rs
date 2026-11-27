@@ -1,10 +1,8 @@
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use crate::handlers::{ok_value, AuthUser};
@@ -128,9 +126,6 @@ pub async fn delete_account(State(state): State<Arc<AppState>>, _user: AuthUser,
 #[derive(Deserialize, Default)] pub struct IdsQuery { #[serde(default)] pub ids: Option<String> }
 fn ids(raw:String)->Vec<i64>{raw.split(',').filter_map(|v|v.trim().parse().ok()).collect()}
 fn hash_password(password:&str)->(String,String){
-    use rand::RngCore; let mut salt=[0u8;16]; rand::thread_rng().fill_bytes(&mut salt);
-    let salt=base64::engine::general_purpose::STANDARD.encode(salt);
-    let mut h=Sha256::new(); h.update(salt.as_bytes()); h.update(password.as_bytes());
-    (salt,base64::engine::general_purpose::STANDARD.encode(h.finalize()))
+    crate::handlers::auth::hash_password(password)
 }
 fn err(code:u16,message:&str)->Response{(axum::http::StatusCode::OK,Json(json!({"code":code,"message":message}))).into_response()}

@@ -43,9 +43,8 @@ pub fn jwt_sign<T: Serialize>(
 /// Verify an HS256 JWT and return the decoded claims.
 pub fn jwt_verify<T: DeserializeOwned>(token: &str, secret: &str) -> Option<T> {
     let mut validation = Validation::new(Algorithm::HS256);
-    // The original tokens may not carry `exp`; verify it only when present.
-    validation.validate_exp = false;
-    validation.required_spec_claims.remove("exp");
+    // 强制校验 exp：无过期时间的 token 视为无效。
+    validation.validate_exp = true;
     decode::<T>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),

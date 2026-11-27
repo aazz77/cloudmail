@@ -387,7 +387,7 @@ async fn issue_token(state: &Arc<AppState>, user_id: i64) -> Value {
     match jwt_sign(
         &json!({"user_id": user_id, "token": token, "gen": crate::handlers::AUTH_GEN}),
         &state.config.jwt_secret,
-        0,
+        24 * 3600, // JWT 24h 过期，与登录路径一致
     ) {
         Ok(jwt) => json!(jwt),
         Err(_) => Value::Null,

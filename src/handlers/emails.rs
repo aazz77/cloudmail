@@ -684,7 +684,7 @@ fn build_smtp_transport(
 pub async fn smtp_send_raw(smtp: &crate::config::SmtpConfig, raw: &[u8]) -> Result<(), String> {
     use lettre::address::Address;
     use lettre::address::Envelope;
-    use lettre::{AsyncTransport, Tokio1Executor};
+    use lettre::AsyncTransport;
 
     // 从原始邮件解析 envelope（发件人与收件人）
     let parsed = mail_parser::MessageParser::default()
@@ -738,7 +738,7 @@ async fn send_via_smtp_multi(
     html: &str,
 ) -> Result<(), String> {
     use lettre::message::{MultiPart, SinglePart};
-    use lettre::{AsyncTransport, Message, Tokio1Executor};
+    use lettre::{AsyncTransport, Message};
 
     let mailer = build_smtp_transport(smtp)?;
 

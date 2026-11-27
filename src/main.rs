@@ -4,6 +4,7 @@ mod error;
 mod handlers;
 mod kv;
 mod models;
+mod rate_limit;
 mod smtp_server;
 mod storage;
 mod utils;
@@ -106,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         pool,
         config: config.clone(),
+        rate_limiter: Arc::new(rate_limit::IpRateLimiter::new()),
     });
 
     let api = Router::new()
@@ -166,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/oss/{*key}", get(handlers::storage::get_object))
         .route("/attachments/{*key}", get(handlers::storage::get_object))
         .route("/static/{*key}", get(handlers::storage::get_object))
-        .route("/init/{secret}", get(handlers::init::init))
+        .route("/init", get(handlers::init::init))
         .route("/webhooks", post(handlers::webhooks::resend))
         // OAuth sign-in (LinuxDo / GitHub / Google) + account binding
         .route("/oauth/linuxDo/login", post(handlers::oauth::linux_do_login))
@@ -180,6 +182,11 @@ async fn main() -> anyhow::Result<()> {
         // Telegram mini-app signed email preview
         .route("/telegram/getEmail/{token}", get(handlers::telegram::get_email))
         .layer(middleware::from_fn(log_errors))
+        // IP 限流：登录 10/min、其他 300/min，防爆破与刷接口
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit,
+        ))
         .layer(RequestBodyLimitLayer::new(64 * 1024 * 1024))
         .with_state(state.clone());
 

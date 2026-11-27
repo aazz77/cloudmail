@@ -4,8 +4,6 @@ use axum::response::{IntoResponse, Response};
 use sqlx::Column;
 use axum::Json;
 use base64::Engine;
-use jsonwebtoken::{encode, EncodingKey, Header};
-use rand::RngCore;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -30,6 +28,12 @@ pub struct RegisterRequest {
     pub code: Option<String>,
 }
 
+/// 登录失败锁定阈值与时长：连续失败 5 次锁定 15 分钟（IP + 邮箱双维度）。
+const LOGIN_MAX_FAIL: i64 = 5;
+const LOGIN_LOCK_SECS: i64 = 15 * 60;
+/// JWT 有效期 24 小时。
+const JWT_TTL_SECS: i64 = 24 * 3600;
+
 pub async fn login(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -38,12 +42,18 @@ pub async fn login(
     if req.email.is_empty() || req.password.is_empty() {
         return err(400, "emailAndPwdEmpty");
     }
+    let ip = crate::utils::client_ip(&headers, "Unknown");
+
+    // 防爆破：IP 与邮箱任一处于锁定窗口内即拒绝。
+    if is_locked(&state, &ip, &req.email).await {
+        return err(423, "loginLocked");
+    }
+
     // Turnstile：OPEN(0) 每次都验证；COUNT(2) 在免费次数用尽后验证
     // （原版 login-service.js: verifyRecordService.consumeLoginAttempt）。
     let setting = current_setting(&state).await;
     let login_verify = setting["login_verify"].as_i64().unwrap_or(1);
     let login_verify_count = setting["login_verify_count"].as_i64().unwrap_or(1);
-    let ip = crate::utils::client_ip(&headers, "Unknown");
     let need_verify = login_verify == 0
         || (login_verify == 2 && !super::verify::consume_login_attempt(&state, &ip, login_verify_count).await);
     if need_verify {
@@ -52,6 +62,8 @@ pub async fn login(
             return err(400, &msg);
         }
     }
+
+    // 账号枚举防护：不存在 / 已删 / 封禁 / 密码错统一返回 IncorrectPwd。
     let user: Option<(i64, String, String, String, i64, i64)> = sqlx::query_as(
         "SELECT user_id,email,password,salt,status,is_del FROM user WHERE email = ? COLLATE NOCASE"
     )
@@ -59,19 +71,24 @@ pub async fn login(
     .fetch_optional(&state.pool)
     .await
     .unwrap();
-    let (user_id, email, stored, salt, status, is_del) = match user {
-        Some(row) => row,
-        None => return err(400, "notExistUser"),
+    let valid = match user {
+        Some((user_id, _, stored, salt, status, is_del))
+            if is_del == 0 && status == 0 && verify_password(&req.password, &salt, &stored) =>
+        {
+            Some(user_id)
+        }
+        _ => None,
     };
-    if is_del == 1 {
-        return err(400, "isDelUser");
-    }
-    if status == 1 {
-        return err(400, "isBanUser");
-    }
-    if !verify_password(&req.password, &salt, &stored) {
-        return err(400, "IncorrectPwd");
-    }
+    let user_id = match valid {
+        Some(id) => id,
+        None => {
+            record_login_failure(&state, &ip, &req.email).await;
+            return err(400, "IncorrectPwd");
+        }
+    };
+
+    // 登录成功：清零该 IP+邮箱的失败计数与锁定。
+    clear_login_failure(&state, &ip, &req.email).await;
     let token = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO auth_session(token,user_id) VALUES(?,?)")
         .bind(&token)
@@ -80,14 +97,52 @@ pub async fn login(
         .await
         .unwrap();
     trim_sessions(&state.pool, user_id).await;
-    let jwt = encode(
-        &Header::default(),
+    // JWT 带 exp（24h）；exp 校验在 AuthUser 提取层强制开启。
+    let jwt = match crate::utils::jwt_sign(
         &json!({"user_id": user_id, "token": token, "gen": crate::handlers::AUTH_GEN}),
-        &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-    )
-    .unwrap();
-    let _ = email;
+        &state.config.jwt_secret,
+        JWT_TTL_SECS,
+    ) {
+        Ok(jwt) => jwt,
+        Err(e) => return err(500, &e),
+    };
     ok_value(json!({ "token": jwt }))
+}
+
+/// 检查 IP 或邮箱是否被锁定；locked_until 为 UTC 的 "YYYY-MM-DD HH:MM:SS"。
+async fn is_locked(state: &Arc<AppState>, ip: &str, email: &str) -> bool {
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let ip_locked: Option<String> = sqlx::query_scalar(
+        "SELECT locked_until FROM login_attempt WHERE ip=? AND locked_until IS NOT NULL AND locked_until>?",
+    )
+    .bind(ip).bind(&now).fetch_one(&state.pool).await.ok().flatten();
+    if ip_locked.is_some() {
+        return true;
+    }
+    let email_locked: Option<String> = sqlx::query_scalar(
+        "SELECT locked_until FROM login_attempt WHERE email=? COLLATE NOCASE AND locked_until IS NOT NULL AND locked_until>?",
+    )
+    .bind(email).bind(&now).fetch_one(&state.pool).await.ok().flatten();
+    email_locked.is_some()
+}
+
+/// 记录一次失败：对 IP 维度（email=''）与邮箱维度（ip=''）各 +1；
+/// 达到阈值则设置锁定窗口。
+async fn record_login_failure(state: &Arc<AppState>, ip: &str, email: &str) {
+    let bump = format!(
+        "INSERT INTO login_attempt(ip,email,fail_count) VALUES(?,?,1) \
+         ON CONFLICT(ip,email) DO UPDATE SET fail_count=fail_count+1, \
+         locked_until=CASE WHEN fail_count+1>={} THEN datetime('now','+{} seconds') ELSE locked_until END",
+        LOGIN_MAX_FAIL, LOGIN_LOCK_SECS,
+    );
+    let _ = sqlx::query(&bump).bind(ip).bind("").execute(&state.pool).await;
+    let _ = sqlx::query(&bump).bind("").bind(email).execute(&state.pool).await;
+}
+
+/// 登录成功后清除失败计数（按本次 IP 与邮箱）。
+async fn clear_login_failure(state: &Arc<AppState>, ip: &str, email: &str) {
+    let _ = sqlx::query("DELETE FROM login_attempt WHERE ip=? OR email=? COLLATE NOCASE")
+        .bind(ip).bind(email).execute(&state.pool).await;
 }
 
 pub async fn register(
@@ -475,16 +530,35 @@ pub async fn trim_sessions(pool: &sqlx::SqlitePool, user_id: i64) {
     }
 }
 
+/// 密码哈希：argon2id（PHC 字符串），弱随机兜底保留旧 SHA256+salt 逻辑。
+/// 返回 (salt, hash)：argon2 路径 salt 留空（已内含于 PHC），hash 为 PHC 字符串。
+pub fn hash_password(password: &str) -> (String, String) {
+    use argon2::password_hash::{rand_core::OsRng, SaltString};
+    use argon2::{Argon2, PasswordHasher};
+    let salt = SaltString::generate(&mut OsRng);
+    match Argon2::default().hash_password(password.as_bytes(), &salt) {
+        Ok(phc) => (String::new(), phc.to_string()),
+        Err(_) => legacy_hash_password(password),
+    }
+}
+
+/// 校验密码：PHC（argon2id）优先，旧 SHA256+salt 自动兼容，避免存量用户失效。
 pub fn verify_password(password: &str, salt: &str, stored: &str) -> bool {
+    use argon2::{Argon2, PasswordHash, PasswordVerifier};
+    if stored.starts_with("$argon2") {
+        return PasswordHash::new(stored)
+            .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+            .unwrap_or(false);
+    }
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());
     hasher.update(password.as_bytes());
     base64::engine::general_purpose::STANDARD.encode(hasher.finalize()) == stored
 }
 
-pub fn hash_password(password: &str) -> (String, String) {
+fn legacy_hash_password(password: &str) -> (String, String) {
     let mut salt = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut salt);
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut salt);
     let salt = base64::engine::general_purpose::STANDARD.encode(salt);
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());

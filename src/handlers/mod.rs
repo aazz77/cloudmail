@@ -152,8 +152,9 @@ impl FromRequestParts<std::sync::Arc<AppState>> for AuthUser {
             return Err(unauthorized("authExpired"));
         }
         let mut validation = Validation::default();
-        validation.required_spec_claims.remove("exp");
-        validation.validate_exp = false;
+        // 开启 exp 校验：所有签发路径（登录/OAuth）均带 exp（24h），
+        // 无 exp 的旧 token 或无过期时间的伪造 token 一律拒绝。
+        validation.validate_exp = true;
         let data = decode::<Claims>(
             &token,
             &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),

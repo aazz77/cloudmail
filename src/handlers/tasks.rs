@@ -37,6 +37,20 @@ pub fn spawn(pool: SqlitePool, _config: Arc<Config>) {
                 let _ = sqlx::query("DELETE FROM verify_record").execute(&pool).await;
             }
 
+            // 清理过期会话（JWT 24h，保留 2 天余量）与登录失败锁定记录。
+            let _ = sqlx::query(
+                "DELETE FROM auth_session WHERE created_at < datetime('now','-2 days')",
+            )
+            .execute(&pool)
+            .await;
+            // 锁定已到期的记录直接删除（下次失败从 0 重新计数）；
+            // 无锁定的失败记录保留，直到成功登录清零。超过 1 天的旧记录一并清理。
+            let _ = sqlx::query(
+                "DELETE FROM login_attempt WHERE locked_until IS NOT NULL AND locked_until < datetime('now')",
+            )
+            .execute(&pool)
+            .await;
+
             // Clear expired KV entries (public tokens / analysis cache).
             crate::kv::clear_expired(&pool).await;
 
