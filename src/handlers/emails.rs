@@ -273,10 +273,10 @@ pub async fn latest(State(state): State<Arc<AppState>>, user: AuthUser, Query(q)
 }
 
 #[derive(Deserialize, Default)]
-pub struct IdsQuery { #[serde(default)] pub emailIds: Option<String> }
+pub struct IdsQuery { #[serde(default, rename = "emailIds")] pub email_ids: Option<String> }
 
 pub async fn delete(State(state): State<Arc<AppState>>, user: AuthUser, Query(q): Query<IdsQuery>) -> Response {
-    let ids = ids_from(q.emailIds.unwrap_or_default());
+    let ids = ids_from(q.email_ids.unwrap_or_default());
     if ids.is_empty() { return ok_value(json!(null)); }
     let setting = crate::handlers::auth::current_setting(&state).await;
     let sync_delete = setting["sync_delete"].as_i64().unwrap_or(0) == 0; // 0 = OPEN
@@ -301,7 +301,7 @@ pub async fn delete(State(state): State<Arc<AppState>>, user: AuthUser, Query(q)
 }
 
 pub async fn read(State(state): State<Arc<AppState>>, user: AuthUser, Json(req): Json<IdsQuery>) -> Response {
-    let ids = ids_from(req.emailIds.unwrap_or_default());
+    let ids = ids_from(req.email_ids.unwrap_or_default());
     let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!("UPDATE email SET unread=1 WHERE user_id=? AND email_id IN ({placeholders})");
     let query = sqlx::query(&sql).bind(user.user_id);
@@ -311,7 +311,7 @@ pub async fn read(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
 }
 
 pub async fn att_list(State(state): State<Arc<AppState>>, user: AuthUser, Query(q): Query<IdsQuery>) -> Response {
-    let ids = ids_from(q.emailIds.unwrap_or_default());
+    let ids = ids_from(q.email_ids.unwrap_or_default());
     let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!("SELECT att_id,user_id,email_id,account_id,key,filename,mime_type,size,type FROM attachments WHERE user_id=? AND email_id IN ({placeholders}) AND type=0");
     let query = sqlx::query(&sql).bind(user.user_id);
@@ -337,14 +337,14 @@ pub struct SendRequest {
     #[serde(default)] pub name: Option<String>,
     #[serde(default, alias = "sendType")] pub send_type: Option<String>,
     #[serde(default, alias = "emailId")] pub email_id: i64,
-    #[serde(default)] pub receiveEmail: Vec<String>,
-    #[serde(default)] pub ccEmail: Vec<String>,
-    #[serde(default)] pub bccEmail: Vec<String>,
+    #[serde(default, rename = "receiveEmail")] pub receive_email: Vec<String>,
+    #[serde(default, rename = "ccEmail")] pub cc_email: Vec<String>,
+    #[serde(default, rename = "bccEmail")] pub bcc_email: Vec<String>,
     #[serde(default)] pub text: Option<String>,
     #[serde(default)] pub content: Option<String>,
     #[serde(default)] pub subject: Option<String>,
     #[serde(default)] pub attachments: Vec<AttachmentRequest>,
-    #[serde(default)] pub manyType: Option<String>,
+    #[serde(default, rename = "manyType")] pub many_type: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -353,7 +353,7 @@ pub struct AttachmentRequest {
     #[serde(default)] pub filename: String,
     #[serde(default)] pub size: Option<i64>,
     #[serde(default, alias = "contentType")] pub mime_type: Option<String>,
-    #[serde(default)] pub contentId: Option<String>,
+    #[serde(default, rename = "contentId")] pub content_id: Option<String>,
 }
 
 /// 地址列表归一化：去空白、去空项。
@@ -364,9 +364,9 @@ fn normalize_address_list(list: &[String]) -> Vec<String> {
 pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req): Json<SendRequest>) -> Response {
     use crate::handlers::common as cm;
 
-    let mut receive_email = normalize_address_list(&req.receiveEmail);
-    let mut cc_email = normalize_address_list(&req.ccEmail);
-    let mut bcc_email = normalize_address_list(&req.bccEmail);
+    let mut receive_email = normalize_address_list(&req.receive_email);
+    let mut cc_email = normalize_address_list(&req.cc_email);
+    let mut bcc_email = normalize_address_list(&req.bcc_email);
     receive_email.retain(|e| e.contains('@'));
     if receive_email.is_empty() {
         return err(400, "emptyRecipient");
@@ -380,7 +380,7 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
     bcc_email.retain(|e| !taken.contains(&e.to_lowercase()));
 
     // 分开发送不带抄送和密送
-    let separate = req.manyType.as_deref() == Some("divide");
+    let separate = req.many_type.as_deref() == Some("divide");
     if separate {
         cc_email.clear();
         bcc_email.clear();
@@ -470,7 +470,7 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
     }
 
     // 附件数量限制
-    let image_count = req.attachments.iter().filter(|a| a.contentId.is_some()).count();
+    let image_count = req.attachments.iter().filter(|a| a.content_id.is_some()).count();
     if image_count > 10 {
         return err(400, "imageAttLimit");
     }
@@ -552,7 +552,7 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
                 "INSERT INTO attachments(user_id,email_id,account_id,key,filename,mime_type,size,type,content_id,related) VALUES(?,?,?,?,?,?,?,0,?,1)")
                 .bind(user.user_id).bind(email_id).bind(account_id).bind(&key)
                 .bind(&att.filename).bind(&att.mime_type).bind(att.size.unwrap_or(bytes.len() as i64))
-                .bind(att.contentId.clone().unwrap_or_default())
+                .bind(att.content_id.clone().unwrap_or_default())
                 .execute(&state.pool).await;
         }
 
@@ -589,13 +589,10 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
             None => {
                 // `+` 别名回退到主地址
                 let base = cm::get_base_email(inbox_addr);
-                match sqlx::query_as::<_, (i64, i64)>(
+                sqlx::query_as::<_, (i64, i64)>(
                     "SELECT account_id,user_id FROM account WHERE email=? COLLATE NOCASE AND is_del=0")
                     .bind(&base).fetch_optional(&state.pool).await.unwrap_or(None)
-                {
-                    Some(v) => v,
-                    None => (0, 0),
-                }
+                    .unwrap_or_default()
             }
         };
 
@@ -627,7 +624,7 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
         .bind(account_id_in).bind(user_id_in)
         .bind(&subject).bind(&text).bind(&content)
         .bind(&cc_json_empty)
-        .bind(&recipient_json(&[inbox_addr.clone()]))
+        .bind(recipient_json(std::slice::from_ref(inbox_addr)))
         .bind(inbox_addr).bind(cm::get_name(inbox_addr))
         .bind(status_in)
         .bind(&message)
@@ -969,7 +966,7 @@ pub async fn all_list(State(state): State<Arc<AppState>>, _user: AuthUser, Query
 
 pub async fn all_delete(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q): Query<IdsQuery>) -> Response {
     // Original /allEmail/delete is a physical delete by the admin.
-    let ids = ids_from(q.emailIds.unwrap_or_default());
+    let ids = ids_from(q.email_ids.unwrap_or_default());
     crate::handlers::tasks::delete_emails_by_ids(&state.pool, &ids).await;
     ok_value(json!(null))
 }

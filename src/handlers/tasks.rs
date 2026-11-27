@@ -86,7 +86,7 @@ async fn auto_clean(pool: &SqlitePool) {
 
     let exclusions: Vec<String> = exclude
         .unwrap_or_default()
-        .split(|c| c == ',' || c == '，')
+        .split([',', '，'])
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();

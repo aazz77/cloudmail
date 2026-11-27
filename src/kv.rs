@@ -43,13 +43,6 @@ pub async fn put(pool: &SqlitePool, key: &str, value: &str, ttl_secs: i64) {
     .await;
 }
 
-pub async fn delete(pool: &SqlitePool, key: &str) {
-    let _ = sqlx::query("DELETE FROM kv_store WHERE kv_key=?")
-        .bind(key)
-        .execute(pool)
-        .await;
-}
-
 /// Remove every expired entry. Called by the daily maintenance task.
 pub async fn clear_expired(pool: &SqlitePool) {
     let now = chrono::Utc::now().timestamp();

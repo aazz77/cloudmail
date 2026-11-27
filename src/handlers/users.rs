@@ -14,8 +14,8 @@ pub struct ListQuery {
     #[serde(default)] pub size: i64,
     #[serde(default)] pub email: Option<String>,
     #[serde(default)] pub status: i64,
-    #[serde(default)] pub timeSort: i64,
-    #[serde(default)] pub isDel: i64,
+    #[serde(default, rename = "timeSort")] pub time_sort: i64,
+    #[serde(default, rename = "isDel")] pub is_del: i64,
 }
 
 pub async fn list(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q): Query<ListQuery>) -> Response {
@@ -23,13 +23,13 @@ pub async fn list(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q):
     let offset = (q.num.max(1)-1)*size;
     let mut sql = String::from("SELECT user_id,email,type,status,send_count,create_time,is_del FROM user WHERE 1=1");
     if q.status > -1 { sql.push_str(" AND status=? AND is_del=0"); }
-    if q.isDel > 0 { sql.push_str(" AND is_del=?"); }
+    if q.is_del > 0 { sql.push_str(" AND is_del=?"); }
     if q.email.is_some() { sql.push_str(" AND email LIKE ?"); }
-    sql.push_str(if q.timeSort==1 {" ORDER BY user_id ASC"} else {" ORDER BY user_id DESC"});
+    sql.push_str(if q.time_sort==1 {" ORDER BY user_id ASC"} else {" ORDER BY user_id DESC"});
     sql.push_str(" LIMIT ? OFFSET ?");
     let query = sqlx::query(&sql);
     let query = if q.status > -1 { query.bind(q.status) } else { query };
-    let query = if q.isDel > 0 { query.bind(q.isDel) } else { query };
+    let query = if q.is_del > 0 { query.bind(q.is_del) } else { query };
     let query = if let Some(email) = q.email { query.bind(format!("{email}%")) } else { query };
     let rows = query.bind(size).bind(offset).fetch_all(&state.pool).await.unwrap_or_default();
     let list = rows.into_iter().map(|r| {
@@ -55,18 +55,18 @@ pub async fn add(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req):
 }
 
 #[derive(Deserialize)]
-pub struct IdRequest { #[serde(default)] pub userId: i64, #[serde(default)] pub password: Option<String>, #[serde(default)] pub status: Option<i64>, #[serde(default)] pub typeId: Option<i64>, #[serde(default)] pub r#type: Option<i64> }
+pub struct IdRequest { #[serde(default, rename = "userId")] pub user_id: i64, #[serde(default)] pub password: Option<String>, #[serde(default)] pub status: Option<i64>, #[serde(default, rename = "typeId")] pub type_id: Option<i64>, #[serde(default)] pub r#type: Option<i64> }
 
 pub async fn set_password(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req): Json<IdRequest>) -> Response {
-    if let Some(p)=req.password { let (s,h)=hash_password(&p); sqlx::query("UPDATE user SET password=?,salt=? WHERE user_id=?").bind(h).bind(s).bind(req.userId).execute(&state.pool).await.unwrap(); }
+    if let Some(p)=req.password { let (s,h)=hash_password(&p); sqlx::query("UPDATE user SET password=?,salt=? WHERE user_id=?").bind(h).bind(s).bind(req.user_id).execute(&state.pool).await.unwrap(); }
     ok_value(json!(null))
 }
 pub async fn set_status(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req): Json<IdRequest>) -> Response {
-    if let Some(s)=req.status { sqlx::query("UPDATE user SET status=? WHERE user_id=?").bind(s).bind(req.userId).execute(&state.pool).await.unwrap(); }
+    if let Some(s)=req.status { sqlx::query("UPDATE user SET status=? WHERE user_id=?").bind(s).bind(req.user_id).execute(&state.pool).await.unwrap(); }
     ok_value(json!(null))
 }
 pub async fn set_type(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req): Json<IdRequest>) -> Response {
-    if let Some(t)=req.typeId { sqlx::query("UPDATE user SET type=? WHERE user_id=?").bind(t).bind(req.userId).execute(&state.pool).await.unwrap(); }
+    if let Some(t)=req.type_id { sqlx::query("UPDATE user SET type=? WHERE user_id=?").bind(t).bind(req.user_id).execute(&state.pool).await.unwrap(); }
     ok_value(json!(null))
 }
 pub async fn delete(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q): Query<IdsQuery>) -> Response {
@@ -91,14 +91,14 @@ pub async fn delete(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q
     ok_value(json!(null))
 }
 pub async fn reset_send_count(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req): Json<IdRequest>) -> Response {
-    sqlx::query("UPDATE user SET send_count=0 WHERE user_id=?").bind(req.userId).execute(&state.pool).await.unwrap();
+    sqlx::query("UPDATE user SET send_count=0 WHERE user_id=?").bind(req.user_id).execute(&state.pool).await.unwrap();
     ok_value(json!(null))
 }
 pub async fn restore(State(state): State<Arc<AppState>>, _user: AuthUser, Json(req): Json<IdRequest>) -> Response {
     // Restore the user (is_del -> 0) rather than its status flag.
-    sqlx::query("UPDATE user SET is_del=0 WHERE user_id=?").bind(req.userId).execute(&state.pool).await.unwrap();
+    sqlx::query("UPDATE user SET is_del=0 WHERE user_id=?").bind(req.user_id).execute(&state.pool).await.unwrap();
     let email: Option<String> = sqlx::query_scalar("SELECT email FROM user WHERE user_id=?")
-        .bind(req.userId).fetch_one(&state.pool).await.ok();
+        .bind(req.user_id).fetch_one(&state.pool).await.ok();
     if let Some(email) = email {
         let _ = sqlx::query("UPDATE account SET is_del=0 WHERE email=? COLLATE NOCASE")
             .bind(&email).execute(&state.pool).await;
@@ -106,9 +106,9 @@ pub async fn restore(State(state): State<Arc<AppState>>, _user: AuthUser, Json(r
     // `type` restores emails + all the user's accounts as well.
     if req.r#type.unwrap_or(0) != 0 {
         let _ = sqlx::query("UPDATE email SET is_del=0 WHERE user_id=?")
-            .bind(req.userId).execute(&state.pool).await;
+            .bind(req.user_id).execute(&state.pool).await;
         let _ = sqlx::query("UPDATE account SET is_del=0 WHERE user_id=?")
-            .bind(req.userId).execute(&state.pool).await;
+            .bind(req.user_id).execute(&state.pool).await;
     }
     ok_value(json!(null))
 }

@@ -7,6 +7,9 @@ use std::sync::Arc;
 use crate::handlers::{err, ok_value, AuthUser};
 use crate::models::AppState;
 
+/// 权限表查询行：(perm_id, name, perm_key, pid, sort)
+type PermRow = (i64, String, Option<String>, i64, Option<f64>);
+
 /// 原版 verifyUtils：邮箱或域名格式（`*` 仅 banEmail 允许）。
 fn valid_ban_item(value: &str) -> bool {
     if value == "*" {
@@ -170,7 +173,7 @@ pub async fn list(State(state): State<Arc<AppState>>, _user: AuthUser) -> Respon
 
 /// 原版 permService.tree：pid=0 为父节点，子节点挂到 children。
 pub async fn tree(State(state): State<Arc<AppState>>, _user: AuthUser) -> Response {
-    let rows: Vec<(i64, String, Option<String>, i64, Option<f64>)> = sqlx::query_as(
+    let rows: Vec<PermRow> = sqlx::query_as(
         "SELECT perm_id,name,perm_key,pid,sort FROM perm ORDER BY sort,perm_id",
     )
     .fetch_all(&state.pool)

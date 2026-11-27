@@ -51,7 +51,7 @@ pub fn has_avail_domain_perm(avail_domain: &str, email: &str) -> bool {
         return true;
     }
     let domain = get_domain(&email.to_lowercase());
-    list.iter().any(|item| *item == domain)
+    list.contains(&domain)
 }
 
 /// 发件人拉黑判断（原版 roleService.isBanEmail）。
@@ -221,7 +221,6 @@ fn rewrite_srcsets(html: &str, secret: &str, r2_domain: &str, exp: &str) -> Stri
             .split(',')
             .map(|part| {
                 let mut bits: Vec<String> = part
-                    .trim()
                     .split_whitespace()
                     .map(|s| s.to_string())
                     .collect();
@@ -315,7 +314,7 @@ fn tracking_img(tag: &str, r2_domain: &str) -> bool {
                 re.captures_iter(tag).any(|c| {
                     let value = c.get(1).or_else(|| c.get(2));
                     value.map(|v| {
-                        v.as_str().split(',').filter_map(|p| p.trim().split_whitespace().next())
+                        v.as_str().split(',').filter_map(|p| p.split_whitespace().next())
                             .any(|u| proxy_target(u, r2_domain).is_some())
                     }).unwrap_or(false)
                 })

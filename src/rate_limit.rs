@@ -104,8 +104,7 @@ pub async fn rate_limit(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-        % 60
-        == 0
+        .is_multiple_of(60)
     {
         state.rate_limiter.sweep();
     }

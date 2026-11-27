@@ -96,7 +96,7 @@ async fn handle(socket: TcpStream, _addr: std::net::SocketAddr, state: Arc<AppSt
                     Err(MailError::Reject(msg)) => {
                         tracing::info!("Email rejected: {}", msg);
                         write_half
-                            .write_all(format!("550 {}\r\n", msg.replace('\r', " ").replace('\n', " "))
+                            .write_all(format!("550 {}\r\n", msg.replace(['\r', '\n'], " "))
                                 .as_bytes())
                             .await?;
                     }
@@ -678,7 +678,7 @@ pub async fn receive_test_email(
 
     read_response(&mut rd, &mut response).await?;
 
-    send_line(&mut wr, &format!("HELO test-client")).await?;
+    send_line(&mut wr, "HELO test-client").await?;
     read_response(&mut rd, &mut response).await?;
 
     send_line(&mut wr, &format!("MAIL FROM:<{}>", from)).await?;

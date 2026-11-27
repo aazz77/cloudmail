@@ -1,6 +1,5 @@
 mod config;
 mod db;
-mod error;
 mod handlers;
 mod kv;
 mod models;
@@ -17,9 +16,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use mime_guess;
 use rust_embed::RustEmbed;
-use serde_json::json;
 use std::sync::Arc;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -74,14 +71,6 @@ async fn log_errors(req: Request, next: Next) -> Response {
         tracing::error!("request failed: {}", response.status());
     }
     response
-}
-
-async fn api_error(code: u16, message: &str) -> Response {
-    (
-        StatusCode::OK,
-        axum::Json(json!({ "code": code, "message": message })),
-    )
-        .into_response()
 }
 
 #[tokio::main]

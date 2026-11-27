@@ -180,9 +180,7 @@ impl FromRequestParts<std::sync::Arc<AppState>> for AuthUser {
         };
 
         // Enforce path-level permissions
-        if let Err(resp) = check_permission(state, &auth_user, parts).await {
-            return Err(resp);
-        }
+        check_permission(state, &auth_user, parts).await?;
 
         Ok(auth_user)
     }
@@ -268,15 +266,6 @@ pub fn err(code: u16, message: &str) -> Response {
     (
         axum::http::StatusCode::OK,
         axum::Json(json!({ "code": code, "message": message })),
-    )
-        .into_response()
-}
-
-pub fn ok<T: serde::Serialize>(data: T) -> Response {
-    let value = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
-    (
-        axum::http::StatusCode::OK,
-        axum::Json(json!({ "code": 200, "message": "success", "data": value })),
     )
         .into_response()
 }

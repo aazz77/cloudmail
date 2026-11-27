@@ -9,22 +9,22 @@ use crate::handlers::{ok_value, AuthUser};
 use crate::models::AppState;
 
 #[derive(Deserialize)]
-pub struct EmailId { #[serde(default)] pub emailId: i64 }
+pub struct EmailId { #[serde(default, rename = "emailId")] pub email_id: i64 }
 #[derive(Deserialize)]
-pub struct ListQuery { #[serde(default)] pub emailId: i64, #[serde(default)] pub size: i64, #[serde(default)] pub full: i64 }
+pub struct ListQuery { #[serde(default, rename = "emailId")] pub email_id: i64, #[serde(default)] pub size: i64, #[serde(default)] pub full: i64 }
 
 pub async fn add(State(state): State<Arc<AppState>>, user: AuthUser, Json(req): Json<EmailId>) -> Response {
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM email WHERE email_id=? AND user_id=?")
-        .bind(req.emailId).bind(user.user_id).fetch_one(&state.pool).await.unwrap_or(0);
+        .bind(req.email_id).bind(user.user_id).fetch_one(&state.pool).await.unwrap_or(0);
     if exists == 0 { return err(400, "starNotExistEmail"); }
     let _ = sqlx::query("INSERT OR IGNORE INTO star(user_id,email_id) VALUES(?,?)")
-        .bind(user.user_id).bind(req.emailId).execute(&state.pool).await;
+        .bind(user.user_id).bind(req.email_id).execute(&state.pool).await;
     ok_value(json!(null))
 }
 
 pub async fn cancel(State(state): State<Arc<AppState>>, user: AuthUser, Query(q): Query<EmailId>) -> Response {
     let _ = sqlx::query("DELETE FROM star WHERE user_id=? AND email_id=?")
-        .bind(user.user_id).bind(q.emailId).execute(&state.pool).await;
+        .bind(user.user_id).bind(q.email_id).execute(&state.pool).await;
     ok_value(json!(null))
 }
 
@@ -39,14 +39,14 @@ pub async fn list(State(state): State<Arc<AppState>>, user: AuthUser, Query(q): 
          LEFT JOIN email AS e ON e.email_id=s.email_id \
          WHERE s.user_id=? AND e.is_del=0",
     );
-    if q.emailId > 0 {
+    if q.email_id > 0 {
         sql.push_str(" AND s.email_id<?");
     }
     sql.push_str(" ORDER BY s.email_id DESC LIMIT ?");
 
     let mut query = sqlx::query(&sql).bind(user.user_id);
-    if q.emailId > 0 {
-        query = query.bind(q.emailId);
+    if q.email_id > 0 {
+        query = query.bind(q.email_id);
     }
     let rows = query.bind(size).fetch_all(&state.pool).await.unwrap_or_default();
 

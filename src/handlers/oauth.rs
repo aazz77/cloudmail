@@ -38,12 +38,13 @@ pub async fn linux_do_login(
         return err(400, "oauthDisabled");
     }
 
-    let mut form = Vec::new();
-    form.push(("client_id", sval(&setting, "linuxdo_client_id")));
-    form.push(("client_secret", sval(&setting, "linuxdo_client_secret")));
-    form.push(("code", req.code.clone()));
-    form.push(("redirect_uri", req.redirect_uri.clone()));
-    form.push(("grant_type", "authorization_code".to_string()));
+    let form = vec![
+        ("client_id", sval(&setting, "linuxdo_client_id")),
+        ("client_secret", sval(&setting, "linuxdo_client_secret")),
+        ("code", req.code.clone()),
+        ("redirect_uri", req.redirect_uri.clone()),
+        ("grant_type", "authorization_code".to_string()),
+    ];
 
     let client = reqwest::Client::new();
     let token_res = client
@@ -156,12 +157,13 @@ pub async fn google_login(
     if !switch_open(&setting, "google_switch") {
         return err(400, "oauthDisabled");
     }
-    let mut form = Vec::new();
-    form.push(("client_id", sval(&setting, "google_client_id")));
-    form.push(("client_secret", sval(&setting, "google_client_secret")));
-    form.push(("code", req.code.clone()));
-    form.push(("redirect_uri", req.redirect_uri.clone()));
-    form.push(("grant_type", "authorization_code".to_string()));
+    let form = vec![
+        ("client_id", sval(&setting, "google_client_id")),
+        ("client_secret", sval(&setting, "google_client_secret")),
+        ("code", req.code.clone()),
+        ("redirect_uri", req.redirect_uri.clone()),
+        ("grant_type", "authorization_code".to_string()),
+    ];
 
     let client = reqwest::Client::new();
     let token_res = client

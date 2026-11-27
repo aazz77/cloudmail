@@ -11,9 +11,9 @@ use crate::models::AppState;
 #[derive(Deserialize)]
 pub struct AddRequest {
     pub code: String,
-    pub roleId: i64,
+    #[serde(rename = "roleId")] pub role_id: i64,
     pub count: i64,
-    pub expireTime: String,
+    #[serde(rename = "expireTime")] pub expire_time: String,
 }
 
 /// 原版 regKeyService.add：code/count/expireTime 必填 + 角色存在 + 时间转 UTC。
@@ -35,10 +35,10 @@ pub async fn add(State(state): State<Arc<AppState>>, user: AuthUser, Json(req): 
     if req.code.is_empty() || req.count <= 0 {
         return err(400, "emptyRegKey");
     }
-    if req.expireTime.is_empty() {
+    if req.expire_time.is_empty() {
         return err(400, "emptyRegKeyExpire");
     }
-    let expire_utc = match parse_utc(&req.expireTime) {
+    let expire_utc = match parse_utc(&req.expire_time) {
         Some(v) => v,
         None => return err(400, "emptyRegKeyExpire"),
     };
@@ -48,12 +48,12 @@ pub async fn add(State(state): State<Arc<AppState>>, user: AuthUser, Json(req): 
         return err(400, "isExistRegKye");
     }
     let role: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM role WHERE role_id=?")
-        .bind(req.roleId).fetch_one(&state.pool).await.unwrap_or(0);
+        .bind(req.role_id).fetch_one(&state.pool).await.unwrap_or(0);
     if role == 0 {
         return err(400, "roleNotExist");
     }
     let result = sqlx::query("INSERT INTO reg_key(code,count,role_id,user_id,expire_time) VALUES(?,?,?,?,?)")
-        .bind(&req.code).bind(req.count).bind(req.roleId).bind(user.user_id).bind(&expire_utc)
+        .bind(&req.code).bind(req.count).bind(req.role_id).bind(user.user_id).bind(&expire_utc)
         .execute(&state.pool).await;
     if let Err(e) = result {
         tracing::error!("add reg key failed: {e}");
@@ -119,10 +119,10 @@ pub async fn history(State(state): State<Arc<AppState>>, _user: AuthUser, Query(
 }
 
 #[derive(Deserialize, Default)]
-pub struct IdsQuery { #[serde(default)] pub regKeyIds: Option<String> }
+pub struct IdsQuery { #[serde(default, rename = "regKeyIds")] pub reg_key_ids: Option<String> }
 
 pub async fn delete(State(state): State<Arc<AppState>>, _user: AuthUser, Query(q): Query<IdsQuery>) -> Response {
-    let ids = q.regKeyIds.unwrap_or_default().split(',').filter_map(|v| v.trim().parse::<i64>().ok()).collect::<Vec<_>>();
+    let ids = q.reg_key_ids.unwrap_or_default().split(',').filter_map(|v| v.trim().parse::<i64>().ok()).collect::<Vec<_>>();
     if !ids.is_empty() {
         let ph = vec!["?"; ids.len()].join(",");
         let sql = format!("DELETE FROM reg_key WHERE rege_key_id IN ({ph})");
