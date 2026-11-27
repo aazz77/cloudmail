@@ -644,12 +644,47 @@ pub async fn send(State(state): State<Arc<AppState>>, user: AuthUser, Json(req):
     ok_value(Value::Array(email_results))
 }
 
+/// 按 SMTP 配置构建传输层。
+/// - tls=false → 明文（builder_dangerous）
+/// - tls=true + port 465 → implicit TLS / SMTPS（relay，即 Tls::Wrapper）
+/// - tls=true + 其他端口（587/25 等）→ STARTTLS（starttls_relay，即 Tls::Required）
+///
+/// 注意：lettre 的 `relay()` 是 implicit TLS，不是 STARTTLS。此前 587 误用 relay()
+/// 导致对端先发明文 greeting、客户端按 TLS 解析而报 InvalidContentType。
+fn build_smtp_transport(
+    smtp: &crate::config::SmtpConfig,
+) -> Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>, String> {
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{AsyncSmtpTransport, Tokio1Executor};
+
+    let builder = if !smtp.tls {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&smtp.host).port(smtp.port)
+    } else if smtp.port == 465 {
+        // implicit TLS：连接建立即 TLS 握手，无明文 EHLO
+        AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp.host)
+            .map_err(|e| e.to_string())?
+            .port(smtp.port)
+    } else {
+        // STARTTLS：先明文连接 + EHLO，再升级 TLS
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp.host)
+            .map_err(|e| e.to_string())?
+            .port(smtp.port)
+    };
+
+    Ok(if smtp.user.is_empty() {
+        builder.build()
+    } else {
+        builder
+            .credentials(Credentials::new(smtp.user.clone(), smtp.password.clone()))
+            .build()
+    })
+}
+
 /// 用 SMTP relay 原样转发一封已解析的原始邮件（对应原版 CF `message.forward`）。
 pub async fn smtp_send_raw(smtp: &crate::config::SmtpConfig, raw: &[u8]) -> Result<(), String> {
     use lettre::address::Address;
-    use lettre::transport::smtp::authentication::Credentials;
     use lettre::address::Envelope;
-    use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
+    use lettre::{AsyncTransport, Tokio1Executor};
 
     // 从原始邮件解析 envelope（发件人与收件人）
     let parsed = mail_parser::MessageParser::default()
@@ -688,24 +723,7 @@ pub async fn smtp_send_raw(smtp: &crate::config::SmtpConfig, raw: &[u8]) -> Resu
     }
     let envelope = Envelope::new(sender, recipients).map_err(|e: lettre::error::Error| e.to_string())?;
 
-    let mailer = if smtp.tls {
-        let builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp.host)
-            .map_err(|e| e.to_string())?
-            .port(smtp.port);
-        if smtp.user.is_empty() {
-            builder.build()
-        } else {
-            builder.credentials(Credentials::new(smtp.user.clone(), smtp.password.clone())).build()
-        }
-    } else {
-        let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&smtp.host)
-            .port(smtp.port);
-        if smtp.user.is_empty() {
-            builder.build()
-        } else {
-            builder.credentials(Credentials::new(smtp.user.clone(), smtp.password.clone())).build()
-        }
-    };
+    let mailer = build_smtp_transport(smtp)?;
     mailer.send_raw(&envelope, raw).await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -720,27 +738,9 @@ async fn send_via_smtp_multi(
     html: &str,
 ) -> Result<(), String> {
     use lettre::message::{MultiPart, SinglePart};
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+    use lettre::{AsyncTransport, Message, Tokio1Executor};
 
-    let mailer = if smtp.tls {
-        let builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp.host)
-            .map_err(|e| e.to_string())?
-            .port(smtp.port);
-        if smtp.user.is_empty() {
-            builder.build()
-        } else {
-            builder.credentials(Credentials::new(smtp.user.clone(), smtp.password.clone())).build()
-        }
-    } else {
-        let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&smtp.host)
-            .port(smtp.port);
-        if smtp.user.is_empty() {
-            builder.build()
-        } else {
-            builder.credentials(Credentials::new(smtp.user.clone(), smtp.password.clone())).build()
-        }
-    };
+    let mailer = build_smtp_transport(smtp)?;
 
     let body = MultiPart::alternative()
         .singlepart(SinglePart::plain(text.to_string()))
